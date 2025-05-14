@@ -1,0 +1,223 @@
+---
+title: "RNAseq Workshop"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Alignment
+
+As a first step, keep all the pre-processed reads in a folder named **FastQ_Cleaned**. The output of pre-processing will be two files per samples having file names in the format **SampleName_1_val_1.fq.gz and SampleName_2_val_1.fq.gz**. So there should be 12 files in your folder corresponding to out 6 samples. Once the files are in the folder, we can run the alignment using the tool Hisat2. There are three steps in the alignment.
+
+Step 1 : Make indices of the reference genome. Here we are converting the reference genome in fasta format to a specific machine format suitable for alignment.
+
+For this first make a folder named **HumanGenome** and keep the downloaded Human genome in fasta format (Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa) and the gene model in gtf format (Homo_sapiens.GRCh38.111.gtf). If the files are gzipped unzip them before use.
+
+```{r, eval=FALSE, engine='bash'}
+cd HumanGenome # change the directory to HumanGenome
+nohup /home/anoop/Desktop/RNASeq/hisat2-2.2.1-Linux_x86_64/hisat2-2.2.1/hisat2-build 
+-p 4 Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa human &
+
+# -p is the option to set the number of cores to use. Please check the total 
+#cores of your system, and set the appropriate number of cores.
+# you can check the number of cores of your system by using the command "nproc".
+#If the total number of cores of your system is 8, then use 5. Do not use all 
+#the cores. Here I used 4 cores.
+#Remember to give the correct path of hista2. In my case, the hisat2 
+#files are inside the folder RNASeq in my desktop.
+```
+
+
+Step 2 : Align the reads in the fastq files against the reference genome
+
+First create a folder named **Alignment** outside of the folder **HumanGenome**.
+
+```{r, eval=FALSE, engine='bash'}
+cd ..
+mkdir Alignment
+cd Alignment
+nohup /home/anoop/Desktop/RNASeq/hisat2-2.2.1-Linux_x86_64/hisat2-2.2.1/hisat2
+-p 4 --rf -x ../HumanGenome/human -1 ../FastQ_Cleaned/SRR18829406_1_val_1.fq.gz 
+-2 ../FastQ_Cleaned/SRR18829406_2_val_2.fq.gz -S SRR18829406.sam &
+
+#After each alignment you will get the screeen output in the nohup.out file.
+#Save the nohup for each alignment.
+mv nohup.out SRR18829406_output.txt
+```
+
+Step 3 : Convert the alignment output in SAM format to sorted BAM format.
+```{r, eval=FALSE, engine='bash'}
+samtools view -bS SRR18829406.sam | samtools sort -n -o SRR18829406.sorted.bam -
+```
+
+Once all the steps for one sample is finished. Repeat them for other samples one by one. After the creation of bam file you can delete the sam file. We only need the bam file for further analysis.
+
+
+## Read Counting
+
+At this step, we are counting number of reads originated from each genes in the genome. For that we are using the tool **FeatureCounts**. The input will be the sorted bam files generated in the previous alignement step.
+
+```{r, eval=FALSE, engine='bash'}
+nohup /home/anoop/Desktop/RNASeq/subread-2.0.6-Linux-x86_64/bin/featureCounts -p --countReadPairs -T 4 -s 2 -t exon -g gene_id -a Homo_sapiens.GRCh38.111.gtf -o ReadCounts.txt SRR18829406.sorted.bam SRR18829408.sorted.bam SRR18829442.sorted.bam SRR18829456.sorted.bam SRR18829461.sorted.bam SRR18829463.sorted.bam
+
+# Here -T is the nummber of cores to use. Set the according to your system.
+```
+
+Now open the output file which is "ReadCounts.txt" in the terminal and see what are the information we obtained from read counting. The first line is the command we executed the line we can remove it.
+
+```{r, eval=FALSE, engine='bash'}
+awk '!/^#/' ReadCounts.txt > ReadCountsFinal.txt  
+
+# Here we just removed the first line starting with "#".
+```
+
+We perform all the downstream analysis on the file "ReadCountsFinal.txt"
+
+## Downstream Analysis
+
+```{r, eval=FALSE}
+data=read.delim("/home/bala/Desktop/RNA_seq/Alignment/ReadCountsFinal.txt")
+data=read.delim("/home/bala/Desktop/RNA_seq/human_genome/Count.txt")
+
+# First read the count data to R as a dataframe.
+
+# The columns "Chr, Start, End, Strand, Length" are not required at the moment.
+# So we can remove those.
+
+dataFilt <- subset(data, select = -c(Chr, Start, End, Strand,Length))
+
+# Now it is better to change the SRR ID to real sample name. Find the corresponding
+# Sample names from the SRA info sheet we have initially downloaded.
+     
+colnames(dataFilt)[which(names(dataFilt) == "SRR18829406.sorted.bam")] <- "COVID19_020_Severe"
+colnames(dataFilt)[which(names(dataFilt) == "SRR18829408.sorted.bam")] <- "COVID19_007_Severe"
+colnames(dataFilt)[which(names(dataFilt) == "SRR18829442.sorted.bam")] <- "COVID19_009_Severe"
+colnames(dataFilt)[which(names(dataFilt) == "SRR18829456.sorted.bam")] <- "COVID19_16_HC"
+colnames(dataFilt)[which(names(dataFilt) == "SRR18829461.sorted.bam")] <- "COVID19_11_HC"
+colnames(dataFilt)[which(names(dataFilt) == "SRR18829463.sorted.bam")] <- "COVID19_1_HC"
+```
+
+Now we are ready to go. As you can see we have ensembl gene IDs in our data. So we need to get gene names and its biotype also. You can use the R package **biomaRt** for this. If not installed, please install the package following the instruction at https://bioconductor.org/packages/release/bioc/html/biomaRt.html
+
+
+```{r, eval=FALSE}
+library(biomaRt)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+
+
+GeneInfo <- getBM(filters= "ensembl_gene_id",
+                  attributes= c("ensembl_gene_id","gene_biotype","hgnc_symbol"),
+                  values=dataFilt$Geneid,mart= ensembl)
+dataFilt_Modified=merge(dataFilt,GeneInfo,by.x = "Geneid", by.y = "ensembl_gene_id")
+write.table(dataFilt_Modified,file="/home/bala/Desktop/RNA_seq/Alignment/FinalTable.txt",sep="\t",col.names = NA,quote = FALSE)
+```
+
+Open the resultant file and observe the new columns.
+
+It can be seen that, there are many genes belong to various biotypes. For our analysis, we are going to use only protein coding genes. 
+
+```{r, eval=FALSE}
+ProtCode <- subset(dataFilt_Modified, gene_biotype =="protein_coding")
+rownames(ProtCode)=paste(ProtCode$Geneid,ProtCode$hgnc_symbol,sep="_")
+ProtCode <- subset(ProtCode, select = -c(gene_biotype, hgnc_symbol, Geneid))
+```
+
+Now, we have our data perfectly shaped for all the downstream analysis. You can also export the dataframe to a file if you need.
+
+```{r, eval=FALSE}
+write.table(ProtCode,file="/home/anoop/Desktop/RNASeq/Alignment/ProteinCodingCount.txt",
+            sep="\t",col.names = NA,quote = FALSE)
+```
+
+As a first in the downstream analysis, we will check the distribution of samples. This will tell us how similar and dissimilar the samples are. We use dimensionality reduction method PCA (Principal Component Analysis) for this. We can use the R package PCAtools If not installed, please install the package following the instruction available at the bioconductor website.
+
+We know that the data we have is the raw/not processed read counts, which will have biases due to various factors such as sequencing depth, gene-length etc. So first we need to remove those biases (in other words normalize) from the data before performing PCA. There are many methods available to normalize the count data, some of them are TPM, FPKM, CPM, TMM, VST. In our exercise we use the most basic normalization which is CPM (counts per million). 
+
+The formula for computing counts per million is 
+
+CPM = (Read counts of a gene /Total counts in the sample) * 10^6
+
+```{r, eval=FALSE}
+TotalCounts <- colSums(ProtCode)
+CPM <- t(t(ProtCode) / TotalCounts * 1e6)
+```
+
+```{r}
+Design=read.delim("/home/anoop/Desktop/RNASeq/Alignment/Design.txt",row.names = 1)
+
+p <- PCAtools::pca(CPM, metadata = Design, removeVar = 0.1,scale = TRUE)
+p$rotated$Group=Design$Group
+write.table(p$rotated,file = "/home/anoop/Desktop/RNASeq/Alignment/PCA.txt",sep = "\t",col.names = NA,quote = FALSE)
+head(p$variance)
+
+```
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+data=read.delim("/home/anoop/Desktop/RNASeq/Alignment/PCA.txt",row.names = 1,check.names = FALSE)
+
+ggplot(data, aes(PC1,PC2,color=Group, fill=Group))+geom_point(size=2,shape=21)+
+  scale_color_manual(values=c(HC="#c9a711",Covid="#005485"))+
+  scale_fill_manual(values=c(HC="#fcd116",Covid="#006aa7"))+
+  labs(x="PC1, X% variation",y="PC2, Y% variation")+
+  theme(axis.title = element_text(size=10),legend.position = "right",plot.margin = margin(4.5,3,4.5,3, "cm"),
+        legend.title=element_blank(),legend.text=element_text(size=10),legend.key.size = unit(0.5, "cm"))+
+  guides(shape = guide_legend(ncol =1,override.aes=list(fill="grey",color="grey")),color = guide_legend(ncol =1),fill = guide_legend(ncol =1))
+
+
+```
+
+Now, lets re-create the PCA using only the top genes which have varying gene expression samples. Use any of the methods for computing dispersion in the data. Here we use median absolute deviation.
+
+```{r}
+data=read.delim("//home/anoop/Desktop/ForUjjwal/Multi_Batch_GEM/MERGED_Batch_Corrected.txt",header=TRUE,row.names = 1,check.names = FALSE)
+mads=apply(CPM,1,mad)
+TopCPM=CPM[rev(order(mads))[1:1000],]
+
+```
+
+
+```{r}
+Design=read.delim("/home/anoop/Desktop/RNASeq/Alignment/Design.txt",row.names = 1)
+
+p <- PCAtools::pca(TopCPM, metadata = Design, removeVar = 0.1,scale = TRUE)
+p$rotated$Group=Design$Group
+write.table(p$rotated,file = "/home/anoop/Desktop/RNASeq/Alignment/PCA_Top1000.txt",sep = "\t",col.names = NA,quote = FALSE)
+head(p$variance)
+
+```
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+data=read.delim("/home/anoop/Desktop/RNASeq/Alignment/PCA_Top1000.txt",row.names = 1,check.names = FALSE)
+pdf("/home/anoop/Desktop/RNASeq/Alignment/PCA_Top1000.pdf")
+ggplot(data, aes(PC1,PC2,color=Group, fill=Group))+geom_point(size=2,shape=21)+
+  scale_color_manual(values=c(HC="#c9a711",Covid="#005485"))+
+  scale_fill_manual(values=c(HC="#fcd116",Covid="#006aa7"))+
+  labs(x="PC1, X% variation",y="PC2, Y% variation")+
+  theme(axis.title = element_text(size=10),legend.position = "right",plot.margin = margin(4.5,3,4.5,3, "cm"),
+        legend.title=element_blank(),legend.text=element_text(size=10),legend.key.size = unit(0.5, "cm"))+
+  guides(shape = guide_legend(ncol =1,override.aes=list(fill="grey",color="grey")),color = guide_legend(ncol =1),fill = guide_legend(ncol =1))
+dev.off()
+
+```
+
+## Differential Expression
+
+
+```{r,eval=FALSE}
+library(DESeq2)
+
+Design=read.delim("/home/anoop/Desktop/RNASeq/Alignment/Design.txt",row.names = 1)
+
+ds=DESeqDataSetFromMatrix(countData = ProtCode,colData = design,design = ~Group)
+ds=DESeq(ds)
+res=results(ds,c("Group","Covid","HC"),independentFiltering = FALSE) # in Covid vs HC
+write.table(res,file="/home/anoop/Desktop/RNASeq/Alignment/Covid_vs_HC.txt",sep="\t", quote=FALSE,col.names = NA)
+```
+
+
