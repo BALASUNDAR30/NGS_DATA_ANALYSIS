@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # === Configuration ===
-REFERENCE="/media/muthu/3bbb26dc-0b65-4ac4-a55f-b5d8613d6385/muthu/Phytozome_based_AS_IC4/REF/Sitalica_genome_Phy.fa"
-MAIN_VCF_DIR="/home/muthu/Desktop/POOJA/GENE_VCF"  # Contains gene folders
-GENE_REGION_FILE="gene_regions.txt"  # TSV file with gene name and scaffold:region
+REFERENCE=" Reference genome File contains folder "
+MAIN_VCF_DIR=" VCF_file directory"  # Contains gene folders
+GENE_REGION_FILE= "gene_regions.txt"  # TSV file with gene name and scaffold:region
 
 # Output parent directory
-OUTPUT_PARENT="./GENE_SEQUENCE"
+OUTPUT_PARENT="./output folder name"
 mkdir -p "$OUTPUT_PARENT"
 
 # Prepare reference index if not already done
